@@ -1,0 +1,29 @@
+[project]
+name = "daily-papers"
+version = "0.1.0"
+description = "飞书 arXiv 论文速读机器人：每日抓取 arXiv 新论文，DeepSeek 生成中文速读卡片，飞书机器人逐篇推送"
+readme = "README.md"
+authors = [
+    { name = "chengyueyang", email = "chengyueyang@telos-inc.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "feedparser>=6.0.11",
+    "openai>=1.50.0",
+    "lark-oapi>=1.4.0",
+    "sqlalchemy>=2.0.30",
+    "apscheduler>=3.10.4,<4",
+    "pypdf>=4.2.0",
+    "httpx>=0.27.0",
+    "pydantic-settings>=2.3.0",
+]
+
+[project.scripts]
+paperbot = "paperbot.__main__:main"
+
+[build-system]
+requires = ["uv_build>=0.12.1,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "paperbot"
