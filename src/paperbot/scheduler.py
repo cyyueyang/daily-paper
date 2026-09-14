@@ -35,6 +35,10 @@ def daily_push_job(bot, settings: Settings) -> None:
     except Exception:  # noqa: BLE001 — 任务失败不炸调度器，明日再试
         logger.exception("每日任务执行失败")
         return
+    # 抓取失败（如 arXiv 429）≠ 真的没论文：不推送、不记日期，等巡检重试
+    if report.fetched and report.fetched.errors:
+        logger.error("arXiv 抓取失败（%s），本次不推送，等待 30 分钟巡检重试", report.fetched.errors)
+        return
     if bot.send_summary(report):
         set_state(STATE_LAST_DIGEST_DATE, today)
         logger.info(
@@ -54,19 +58,41 @@ def start_scheduler(bot, settings: Settings) -> BackgroundScheduler:
         CronTrigger(hour=hour, minute=minute),
         args=[bot, settings],
         id=JOB_ID,
-        misfire_grace_time=3600,
+        # Mac 睡眠会让 cron 错过触发时间：宽限 6 小时，唤醒后补跑
+        misfire_grace_time=6 * 3600,
+        coalesce=True,
+        replace_existing=True,
+    )
+    # 双保险：每 30 分钟检查一次「今日是否已推」，未推且已过推送时间则补跑。
+    # 防御任何调度器在睡眠/唤醒下的意外不触发；last_digest_date 判重保证不重复推送。
+    scheduler.add_job(
+        catchup_check,
+        CronTrigger(minute="*/30"),
+        args=[bot, settings],
+        id="daily_push_catchup",
+        misfire_grace_time=1800,
         coalesce=True,
         replace_existing=True,
     )
     scheduler.start()
-    logger.info("定时任务已注册：每日 %02d:%02d 推送", hour, minute)
+    logger.info("定时任务已注册：每日 %02d:%02d 推送（+30 分钟补跑巡检）", hour, minute)
 
     # 启动补偿：进程在推送时间之后启动且今日未推 → 立即补跑一次
+    catchup_check(bot, settings, async_run=True)
+    return scheduler
+
+
+def catchup_check(bot, settings: Settings, *, async_run: bool = False) -> None:
     now = dt.datetime.now()
     today = dt.date.today().isoformat()
-    if (now.hour, now.minute) >= (hour, minute) and get_state(STATE_LAST_DIGEST_DATE) != today:
-        logger.info("检测到今日汇总未推送（崩溃恢复/首次启动），立即补跑")
+    if (now.hour, now.minute) < settings.push_hour_minute:
+        return
+    if get_state(STATE_LAST_DIGEST_DATE) == today:
+        return
+    logger.info("检测到今日汇总未推送（崩溃恢复/睡眠错过/首次启动），补跑")
+    if async_run:
         threading.Thread(
             target=daily_push_job, args=[bot, settings], name="daily-push-catchup", daemon=True
         ).start()
-    return scheduler
+    else:
+        daily_push_job(bot, settings)
