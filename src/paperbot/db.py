@@ -34,10 +34,12 @@ SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
 
 def init_db() -> None:
     Base.metadata.create_all(engine)
-    # 轻量迁移：老库补 relevance_checked 列（create_all 不会改已有表）
+    # 轻量迁移：老库补列（create_all 不会改已有表）
     with engine.begin() as conn:
         cols = {r[1] for r in conn.exec_driver_sql("PRAGMA table_info(papers)")}
-        if "relevance_checked" not in cols:
-            conn.exec_driver_sql(
-                "ALTER TABLE papers ADD COLUMN relevance_checked INTEGER DEFAULT 0"
-            )
+        for col, ddl in (
+            ("relevance_checked", "ALTER TABLE papers ADD COLUMN relevance_checked INTEGER DEFAULT 0"),
+            ("direction", "ALTER TABLE papers ADD COLUMN direction TEXT"),
+        ):
+            if col not in cols:
+                conn.exec_driver_sql(ddl)

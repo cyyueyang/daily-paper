@@ -52,9 +52,9 @@ def refine_relevance() -> tuple[int, int]:
     kept = dropped = 0
     for i, paper in enumerate(papers):
         try:
-            relevant, tokens = llm.judge_relevance(paper.title, paper.abstract)
-            record_relevance(paper.id, relevant, tokens)
-            if relevant:
+            direction, tokens = llm.judge_relevance(paper.title, paper.abstract)
+            record_relevance(paper.id, direction, tokens)
+            if direction:
                 kept += 1
             else:
                 dropped += 1
@@ -83,7 +83,7 @@ def summarize_pending() -> tuple[int, int]:
     ok = failed = 0
     for i, paper in enumerate(papers):
         try:
-            result = llm.generate_card(paper.title, paper.abstract)
+            result = llm.generate_card(paper.title, paper.abstract, direction=paper.direction)
             record_card(paper.id, result.text, result.tokens)
             ok += 1
             logger.info("卡片生成 %d/%d %s（%d tokens）", i + 1, len(papers), paper.arxiv_id, result.tokens)

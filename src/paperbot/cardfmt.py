@@ -11,21 +11,34 @@ from dataclasses import dataclass
 from .models import Paper
 from .queue_service import STATUS_EMOJI, Stats, parse_authors
 
-# 方向 → (emoji, 飞书卡片 header 模板色)（spec 5.4：LLM=blue，具身=green，世界模型=purple，RL=orange，其他=grey；
-# Omni/Infra 为用户后加方向，配色自取）
+# 方向 → (emoji, 飞书卡片 header 模板色)。8 个核心方向 + 「其他」兜底（含旧数据）
 DIRECTION_META: dict[str, tuple[str, str]] = {
-    "LLM": ("🤖", "blue"),
+    "LLM架构": ("🏗️", "blue"),
+    "LLM预训练": ("🧠", "wathet"),
+    "LLM中训练": ("🧬", "turquoise"),
+    "LLM Infra": ("🛠️", "indigo"),
+    "LLM后训练": ("🎯", "violet"),
     "具身智能": ("🦾", "green"),
     "世界模型": ("🌍", "purple"),
-    "RL": ("🎮", "orange"),
-    "Omni": ("🎨", "violet"),
-    "Infra": ("🛠️", "indigo"),
+    "Omni": ("🎨", "orange"),
     "其他": ("📄", "grey"),
 }
 DEFAULT_DIRECTION = "其他"
 
+# 方向别名表（按序匹配，前者优先）：兼容大小写/中英文/空格变体与旧版方向值
+_DIRECTION_ALIASES: list[tuple[str, list[str]]] = [
+    ("LLM Infra", ["infra", "基础设施"]),
+    ("LLM预训练", ["预训练", "pretrain", "pre-train", "pretraining"]),
+    ("LLM中训练", ["中训练", "midtrain", "mid-train", "midtraining"]),
+    ("LLM后训练", ["后训练", "posttrain", "post-train", "posttraining"]),
+    ("LLM架构", ["架构", "llm"]),  # 旧值「LLM」归入架构桶
+    ("具身智能", ["具身", "embodied"]),
+    ("世界模型", ["世界模型", "worldmodel"]),
+    ("Omni", ["omni", "全模态", "多模态", "multimodal"]),
+]
+
 _ZH_TITLE_RE = re.compile(r"\*\*(.+?)\*\*")
-_DIRECTION_RE = re.compile(r"🏷️\s*方向[：:]\s*([^\s🏷️]+)")
+_DIRECTION_RE = re.compile(r"🏷️\s*方向[：:]\s*([^\n🏷️]+)")
 
 
 @dataclass
@@ -34,28 +47,22 @@ class CardMeta:
     direction: str
 
 
+def parse_direction(raw: str) -> str:
+    """把方向文本（LLM 输出/旧数据）归一到 DIRECTION_META 的键。"""
+    norm = raw.replace(" ", "").lower()
+    for name, aliases in _DIRECTION_ALIASES:
+        if any(a.replace(" ", "") in norm for a in aliases):
+            return name
+    return DEFAULT_DIRECTION
+
+
 def parse_card_meta(card_text: str, fallback_title: str) -> CardMeta:
     """从 5.3 格式的卡片文本解析中文标题与方向；解析失败走兜底。"""
     zh = _ZH_TITLE_RE.search(card_text or "")
     direction = DEFAULT_DIRECTION
     m = _DIRECTION_RE.search(card_text or "")
     if m:
-        raw = m.group(1)
-        # 容忍模型输出「具身」「世界模型 」等变体
-        for name in DIRECTION_META:
-            if name in raw or raw in name:
-                direction = name
-                break
-        else:
-            low = raw.lower()
-            if "具身" in raw:
-                direction = "具身智能"
-            elif "世界" in raw:
-                direction = "世界模型"
-            elif "全模态" in raw or "omni" in low:
-                direction = "Omni"
-            elif "infra" in low or "基础设施" in raw:
-                direction = "Infra"
+        direction = parse_direction(m.group(1).strip())
     return CardMeta(zh_title=zh.group(1).strip() if zh else fallback_title, direction=direction)
 
 
@@ -69,7 +76,8 @@ def _authors_line(paper: Paper) -> str:
 def paper_card_json(paper: Paper) -> dict:
     """5.4 速读卡片：header 按方向配色，body=卡片正文+作者行，底部 3 按钮 + abs 链接。"""
     meta = parse_card_meta(paper.card_text or "", paper.title)
-    emoji, template = DIRECTION_META[meta.direction]
+    direction = paper.direction or meta.direction  # 优先用语义闸门判定的方向
+    emoji, template = DIRECTION_META.get(direction, DIRECTION_META[DEFAULT_DIRECTION])
     return {
         "config": {"wide_screen_mode": True},
         "header": {
@@ -129,10 +137,13 @@ def summary_markdown(date_str: str, papers: list[Paper], failed_count: int) -> s
 
     dist: dict[str, int] = {}
     for p in papers:
-        direction = parse_card_meta(p.card_text or "", p.title).direction
+        direction = p.direction or parse_card_meta(p.card_text or "", p.title).direction
         dist[direction] = dist.get(direction, 0) + 1
-    order = ["LLM", "具身智能", "世界模型", "RL", "Omni", "Infra", "其他"]
-    short = {"具身智能": "具身"}
+    order = list(DIRECTION_META.keys())
+    short = {
+        "LLM架构": "架构", "LLM预训练": "预训练", "LLM中训练": "中训练",
+        "LLM后训练": "后训练", "LLM Infra": "Infra", "具身智能": "具身",
+    }
     dist_str = " · ".join(f"{short.get(d, d)}×{dist[d]}" for d in order if d in dist)
 
     lines = [f"今日新增 {len(papers)} 篇（{dist_str}）", ""]

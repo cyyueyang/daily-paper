@@ -33,7 +33,7 @@ CARD_PROMPT = """你是一位资深 AI 研究员，擅长用中文一句话讲�
 **{{中文标题（自行翻译，忠实原意）}}**
 {{英文原标题}}
 
-🏷️ 方向：{{从 LLM / 具身智能 / 世界模型 / RL / Omni / Infra / 其他 中选一个}}
+🏷️ 方向：{direction_instruction}
 💡 一句话核心：{{≤50字，讲清这篇论文做了什么、解决了什么}}
 🔧 方法要点：{{≤60字}}
 ✨ 亮点：{{≤40字，相比已有工作的差异}}
@@ -60,23 +60,30 @@ DETAIL_PROMPT = """你是一位资深 AI 研究员。请基于以下论文{sourc
 {{≤40字}}"""
 
 
-# 二级语义过滤 prompt：关键词命中后判定是否「核心方向的技术研究」（剔除行业应用水论文）
-RELEVANCE_PROMPT = """你是 AI 研究论文的方向过滤器。判断论文是否属于下列核心方向的技术研究：
+# 二级语义过滤 prompt：关键词命中后判定方向，只收 8 个核心方向，回答方向名或 NO
+RELEVANCE_PROMPT = """你是 AI 研究论文的方向过滤器。只收以下 8 个方向的核心研究：
 
-- LLM：架构、预训练（pre-training）、后训练（post-training，如 SFT/RLHF/RLVR）、推理增强、对齐、评测
-- 具身智能：机器人学习、VLA、操作策略
-- 世界模型
-- RL：强化学习算法与方法
-- Omni：全模态/多模态模型的架构与训练
-- Infra：训练/推理系统、KV cache、分布式训练、量化、MoE、serving
+- LLM架构：模型结构、注意力机制、位置编码、归一化、新模块
+- LLM预训练：pre-training 数据/课程/目标、scaling law
+- LLM中训练：mid-training、长上下文扩展、继续训练
+- LLM Infra：训练/推理系统、KV cache、分布式、量化、serving、编译、MoE 系统侧
+- LLM后训练：SFT、RLHF/RLVR、对齐、推理增强（o1/R1 类）、agentic 训练
+- 具身智能：机器人学习、VLA、操作策略、仿真到真机
+- 世界模型：学习环境动态模型、基于模型的规划
+- Omni：全模态/多模态模型的架构与训练（any-to-any、统一理解与生成）
 
-不属于（回答 NO）：把上述技术当工具解决具体行业问题的应用型论文（如医疗、法律、教育、金融、遥感、生物、材料、农业、社会科学等场景落地）。
-属于（回答 YES）：核心方向的综述、benchmark、数据集、方法论。
+以下一律回答 NO：
+- 把模型当工具的行业应用（医疗、法律、教育、金融、遥感、生物、材料、农业、社会科学等）
+- 下游任务的 benchmark / 数据集 / 评测（如数学榜单、对话系统、问答系统）
+- 与 LLM/具身无关的纯 RL 算法、纯 CV/NLP 任务方法、立场文、调查文
 
-只回答 YES 或 NO，不要输出任何其他内容。
+只回答上述方向名之一或 NO，不要输出任何其他内容。
 
 标题：{title}
 摘要：{abstract}"""
+
+# 卡片方向的合法取值（闸门输出即此集合）
+DIRECTIONS = ["LLM架构", "LLM预训练", "LLM中训练", "LLM Infra", "LLM后训练", "具身智能", "世界模型", "Omni"]
 
 
 @dataclass
@@ -137,18 +144,27 @@ def _chat(prompt: str, max_tokens: int) -> LLMResult:
     raise LLMError(f"DeepSeek 重试 {len(RETRY_DELAYS_S)} 次仍失败：{last_exc}")
 
 
-def generate_card(title: str, abstract: str) -> LLMResult:
-    return _chat(CARD_PROMPT.format(title=title, abstract=abstract), CARD_MAX_TOKENS)
+def generate_card(title: str, abstract: str, direction: str | None = None) -> LLMResult:
+    """生成速读卡片；direction 由语义闸门预先判定，传入即锁定，保证分类一致。"""
+    instruction = direction or "从 " + " / ".join(DIRECTIONS) + " 中选一个"
+    prompt = CARD_PROMPT.format(title=title, abstract=abstract, direction_instruction=instruction)
+    return _chat(prompt, CARD_MAX_TOKENS)
 
 
-def judge_relevance(title: str, abstract: str) -> tuple[bool, int]:
-    """二级语义过滤：是否核心方向技术研究。返回 (是否相关, tokens)。
+def judge_relevance(title: str, abstract: str) -> tuple[str | None, int]:
+    """二级语义过滤+方向判定。返回 (方向或 None=淘汰, tokens)。
 
-    模型回答无法识别时按 YES 处理（fail-open，宁多勿漏，交给卡片环节）。
+    输出无法识别时按「其他」处理（fail-open，宁多勿漏，交给卡片环节兜底）。
     """
-    result = _chat(RELEVANCE_PROMPT.format(title=title, abstract=abstract), max_tokens=10)
-    verdict = result.text.strip().upper()
-    return ("NO" not in verdict, result.tokens)
+    result = _chat(RELEVANCE_PROMPT.format(title=title, abstract=abstract), max_tokens=20)
+    verdict = result.text.strip().strip("。.")
+    if "NO" in verdict.upper()[:4]:
+        return None, result.tokens
+    for d in DIRECTIONS:
+        if d.replace(" ", "") in verdict.replace(" ", ""):
+            return d, result.tokens
+    logger.warning("方向判定输出无法识别 %r，按「其他」保留", verdict)
+    return "其他", result.tokens
 
 
 def generate_detail(title: str, content: str, *, is_fulltext: bool) -> LLMResult:

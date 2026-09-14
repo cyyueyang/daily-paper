@@ -188,14 +188,16 @@ def papers_awaiting_relevance() -> list[Paper]:
         return papers
 
 
-def record_relevance(paper_id: int, relevant: bool, tokens: int) -> None:
+def record_relevance(paper_id: int, direction: str | None, tokens: int) -> None:
+    """记录语义判定结果；direction=None 表示淘汰（保留数据但不进队列）。"""
     with SessionLocal.begin() as s:
         paper = s.get(Paper, paper_id)
         if paper is None:
             return
         paper.relevance_checked = 1
-        if not relevant:
-            paper.filtered_out = 1  # 语义淘汰：保留数据但不进队列
+        paper.direction = direction
+        if direction is None:
+            paper.filtered_out = 1
         add_tokens(s, paper, tokens)
 
 
