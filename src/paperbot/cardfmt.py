@@ -85,7 +85,7 @@ def paper_card_json(paper: Paper) -> dict:
             "title": {"tag": "plain_text", "content": f"{emoji} {meta.zh_title}"},
         },
         "elements": [
-            {"tag": "markdown", "content": paper.card_text or paper.title},
+            {"tag": "markdown", "content": sanitize_math(paper.card_text or paper.title)},
             {"tag": "note", "elements": [{"tag": "plain_text", "content": _authors_line(paper)}]},
             {"tag": "hr"},
             {
@@ -124,8 +124,122 @@ def simple_card_json(title: str, markdown: str, template: str = "blue") -> dict:
     return {
         "config": {"wide_screen_mode": True},
         "header": {"template": template, "title": {"tag": "plain_text", "content": title}},
-        "elements": [{"tag": "markdown", "content": markdown}],
+        "elements": [{"tag": "markdown", "content": sanitize_math(markdown)}],
     }
+
+
+# ---------- LaTeX 公式 → Unicode 纯文本（飞书卡片不渲染 LaTeX） ----------
+
+_MACROS = {
+    # 希腊字母
+    "alpha": "α", "beta": "β", "gamma": "γ", "delta": "δ", "epsilon": "ε",
+    "varepsilon": "ε", "zeta": "ζ", "eta": "η", "theta": "θ", "vartheta": "ϑ",
+    "iota": "ι", "kappa": "κ", "lambda": "λ", "mu": "μ", "nu": "ν", "xi": "ξ",
+    "pi": "π", "rho": "ρ", "sigma": "σ", "tau": "τ", "upsilon": "υ", "phi": "φ",
+    "varphi": "φ", "chi": "χ", "psi": "ψ", "omega": "ω",
+    "Gamma": "Γ", "Delta": "Δ", "Theta": "Θ", "Lambda": "Λ", "Xi": "Ξ",
+    "Pi": "Π", "Sigma": "Σ", "Phi": "Φ", "Psi": "Ψ", "Omega": "Ω",
+    # 符号与算子
+    "int": "∫", "iint": "∬", "sum": "∑", "prod": "∏", "oint": "∮",
+    "in": "∈", "notin": "∉", "subset": "⊂", "subseteq": "⊆", "supset": "⊃",
+    "cup": "∪", "cap": "∩", "times": "×", "cdot": "·", "cdots": "⋯", "ldots": "…",
+    "pm": "±", "mp": "∓", "leq": "≤", "leqslant": "≤", "geq": "≥", "geqslant": "≥",
+    "neq": "≠", "ne": "≠", "approx": "≈", "sim": "∼", "simeq": "≃", "propto": "∝",
+    "equiv": "≡", "ll": "≪", "gg": "≫", "infty": "∞", "partial": "∂", "nabla": "∇",
+    "forall": "∀", "exists": "∃", "rightarrow": "→", "to": "→", "leftarrow": "←",
+    "Rightarrow": "⇒", "Leftarrow": "⇐", "mapsto": "↦", "circ": "∘",
+    "oplus": "⊕", "otimes": "⊗", "odot": "⊙", "ell": "ℓ", "prime": "′",
+    "angle": "∠", "mid": "|", "vert": "|",
+    # 函数名（去反斜杠即可）
+    "min": "min", "max": "max", "arg": "arg", "log": "log", "ln": "ln",
+    "exp": "exp", "sup": "sup", "inf": "inf", "lim": "lim", "det": "det",
+    "dim": "dim", "sin": "sin", "cos": "cos", "tan": "tan",
+}
+
+_DOUBLE_STRUCK = {"R": "ℝ", "E": "𝔼", "N": "ℕ", "Z": "ℤ", "P": "ℙ", "Q": "ℚ", "C": "ℂ"}
+
+_SUP = dict(zip(
+    "0123456789+-=()niabcdefghijklmoprstuvwxyz",
+    "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿⁱᵃᵇᶜᵈᵉᶠᵍʰⁱʲᵏˡᵐᵒᵖʳˢᵗᵘᵛʷˣʸᶻ",
+))
+_SUP.update({"'": "′", "′": "′", "ℓ": "ˡ"})
+# 大写上标（Unicode 只有这些）
+_SUP.update(dict(zip("ABDEGHIJKLMNOPRTUVW", "ᴬᴮᴰᴱᴳᴴᴵᴶᴷᴸᴹᴺᴼᴾᴿᵀᵁⱽᵂ")))
+_SUB = dict(zip(
+    "0123456789+-=()aehijklmnoprstuvx",
+    "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₕᵢⱼₖₗₘₙₒₚᵣₛₜᵤᵥₓ",
+))
+_SUB.update({"ℓ": "ₗ"})
+
+_MATH_RE = re.compile(
+    r"\$\$(.+?)\$\$|\$([^\s$][^$]*?)\$|\\\[(.+?)\\\]|\\\((.+?)\\\)", re.DOTALL
+)
+_MACRO_RE = re.compile(r"\\([A-Za-z]+)")
+
+
+def _to_script(content: str, table: dict, marker: str) -> str:
+    """上下标转 Unicode；有字符映射不了则整体回退为 ^(…) / _(…) 保持可读。"""
+    content = content.strip().replace(" ", "")  # 上下标内部不需要空格
+    if content and all(c in table for c in content):
+        return "".join(table[c] for c in content)
+    return f"{marker}({content})"
+
+
+def _frac_repl(m: re.Match) -> str:
+    num, den = m.group(1).strip(), m.group(2).strip()
+    simple = re.compile(r"[\wΑ-Ωα-ω]+", re.UNICODE)
+    if simple.fullmatch(num) and simple.fullmatch(den):
+        return f"{num}/{den}"
+    return f"({num})/({den})"
+
+
+def _convert_math(s: str) -> str:
+    # 1) 尺寸修饰、间距、双竖线
+    s = re.sub(r"\\(?:left|right|big|Big|bigg|Bigg)\s*([\[\](){}\|.])", r"\1", s)
+    s = re.sub(r"\\[,;:!]", " ", s)
+    s = s.replace(r"\|", "‖")
+    # 2) 带括号的格式命令先剥壳（必须在宏替换之前，否则被宏吃掉反斜杠）
+    s = re.sub(r"\\(?:text|mathrm|mathbf|textbf|mathit|mathsf|operatorname|mathcal)\{([^{}]*)\}", r"\1", s)
+    s = re.sub(r"\\mathbb\{([A-Za-z])\}", lambda m: _DOUBLE_STRUCK.get(m.group(1), m.group(1)), s)
+    # 3) 已知宏替换；未知宏保留反斜杠（可能是重音命令，留给下一步）
+    s = _MACRO_RE.sub(lambda m: _MACROS.get(m.group(1), m.group(0)), s)
+    # 4) 重音符号 → 组合字符（支持 \hat{x} 与 \hat x 两种写法）
+    for cmd, comb in (("hat", "̂"), ("bar", "̄"), ("tilde", "̃"), ("dot", "̇"), ("ddot", "̈"), ("vec", "⃗")):
+        s = re.sub(
+            r"\\" + cmd + r"\s*(?:\{([^{}]{1,2})\}|([A-Za-z0-9Α-ω]))",
+            lambda m, c=comb: (m.group(1) or m.group(2)) + c,
+            s,
+        )
+    # 5) 上下标（先花括号组，再单字符；单字符不含括号，避免回退形式 _(...) 被二次处理）
+    s = re.sub(r"\^\{([^{}]*)\}", lambda m: _to_script(m.group(1), _SUP, "^"), s)
+    s = re.sub(r"_\{([^{}]*)\}", lambda m: _to_script(m.group(1), _SUB, "_"), s)
+    s = re.sub(r"\^([A-Za-z0-9+\-=ℓ′'])", lambda m: _to_script(m.group(1), _SUP, "^"), s)
+    s = re.sub(r"_([A-Za-z0-9+\-=ℓ'])", lambda m: _to_script(m.group(1), _SUB, "_"), s)
+    # 6) 分数与根号
+    s = re.sub(r"\\[cdt]?frac\{([^{}]*)\}\{([^{}]*)\}", _frac_repl, s)
+    s = re.sub(r"\\sqrt\{([^{}]*)\}", r"√(\1)", s)
+    # 7) 残留未知宏去反斜杠、花括号剥壳；紧连字符间的连字符→减号
+    s = _MACRO_RE.sub(lambda m: m.group(1), s)
+    s = re.sub(r"\{([^{}]*)\}", r"\1", s)
+    s = re.sub(r"(?<=[\w)\]₀-₉ⱼ])-(?=[\w(\[])", "−", s)
+    # 8) 空白收敛
+    return re.sub(r"[ \t]+", " ", s).strip()
+
+
+def sanitize_math(text: str) -> str:
+    """把文本中的 LaTeX 数学段（$…$/$$…$$/\\(…\\)/\\[…\\]）转成 Unicode 纯文本。
+
+    飞书卡片不渲染 LaTeX；无数学段时原样返回（幂等，可重复调用）。
+    """
+    if "$" not in text and "\\(" not in text and "\\[" not in text:
+        return text
+
+    def repl(m: re.Match) -> str:
+        inner = next(g for g in m.groups() if g is not None)
+        converted = _convert_math(inner)
+        return f"\n{converted}\n" if m.group(0).startswith(("$$", "\\[")) else converted
+
+    return _MATH_RE.sub(repl, text)
 
 
 # ---------- 每日汇总（spec 5.6） ----------

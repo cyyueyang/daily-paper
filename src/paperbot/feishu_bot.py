@@ -32,6 +32,7 @@ from .cardfmt import (
     chunk_text,
     list_markdown,
     paper_card_json,
+    sanitize_math,
     simple_card_json,
     stats_markdown,
 )
@@ -124,8 +125,8 @@ class FeishuBot:
         return self.send_card(simple_card_json(title, markdown, template))
 
     def send_long_markdown(self, title: str, text: str) -> None:
-        """深度解读：超 4000 字符按片发送（FR-6 允许分片方案）。"""
-        chunks = chunk_text(text)
+        """深度解读：先转 Unicode 公式，再按片发送（FR-6 允许分片方案）。"""
+        chunks = chunk_text(sanitize_math(text))
         for i, chunk in enumerate(chunks):
             suffix = f"（{i + 1}/{len(chunks)}）" if len(chunks) > 1 else ""
             self.send_markdown(f"{title}{suffix}", chunk, "violet")

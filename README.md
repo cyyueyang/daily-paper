@@ -83,6 +83,7 @@ launchctl print gui/$(id -u)/com.paperbot.daily | head   # 查看状态
 - **过滤**：关键词召回 → DeepSeek 二级语义判定（剔除「把 LLM 当工具的行业应用型」论文，只留 LLM 架构/预训练/后训练/具身/世界模型/RL/Omni/Infra 的技术研究）
 - **总结**：DeepSeek `deepseek-chat`，速读卡片 `max_tokens=600`，深度解读 `max_tokens=2000`；单篇失败标 `summarize_failed` 不阻塞队列
 - **深度解读**：PDF 存 `data/pdfs/` 复用，`pypdf` 提取；全文 >100k 字符截断保留前 60k + 后 20k；结果入库缓存，重复请求不耗 token
+- **渲染**：出站文本统一做 LaTeX→Unicode 公式转换（飞书卡片不支持 LaTeX 渲染；深度解读 prompt 已要求模型直接用 Unicode 写公式，转换器兜底存量与漏网内容）
 - **日志**：`logs/paperbot.log`（1MB×3 轮转）+ 终端输出
 
 ## 目录结构
