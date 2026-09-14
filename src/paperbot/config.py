@@ -12,21 +12,44 @@ from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # FR-1 核心命中词（命中 title 或 abstract 即入选，大小写不敏感）
+# 方向：LLM / 具身智能 / 世界模型 / RL / Omni（全模态）/ Infra
 DEFAULT_KEYWORDS: list[str] = [
+    # LLM
     "large language model",
     "LLM",
-    "embodied",
-    "world model",
-    "reinforcement learning",
-    "RLHF",
     "reasoning",
     "agent",
+    "in-context learning",
+    "RLHF",
+    "MCTS",
+    # 具身智能
+    "embodied",
     "robot learning",
     "VLA",
     "vision-language-action",
     "diffusion policy",
-    "MCTS",
-    "in-context learning",
+    # 世界模型
+    "world model",
+    # RL
+    "reinforcement learning",
+    # Omni（全模态）
+    "omni-modal",
+    "omnimodal",
+    "any-to-any",
+    "multimodal",
+    "multi-modal",
+    "VLM",
+    "vision-language model",
+    # Infra
+    "KV cache",
+    "speculative decoding",
+    "inference engine",
+    "model serving",
+    "distributed training",
+    "training framework",
+    "quantization",
+    "mixture of experts",
+    "MoE",
 ]
 
 

@@ -11,12 +11,15 @@ from dataclasses import dataclass
 from .models import Paper
 from .queue_service import STATUS_EMOJI, Stats, parse_authors
 
-# 方向 → (emoji, 飞书卡片 header 模板色)（spec 5.4：LLM=blue，具身=green，世界模型=purple，RL=orange，其他=grey）
+# 方向 → (emoji, 飞书卡片 header 模板色)（spec 5.4：LLM=blue，具身=green，世界模型=purple，RL=orange，其他=grey；
+# Omni/Infra 为用户后加方向，配色自取）
 DIRECTION_META: dict[str, tuple[str, str]] = {
     "LLM": ("🤖", "blue"),
     "具身智能": ("🦾", "green"),
     "世界模型": ("🌍", "purple"),
     "RL": ("🎮", "orange"),
+    "Omni": ("🎨", "violet"),
+    "Infra": ("🛠️", "indigo"),
     "其他": ("📄", "grey"),
 }
 DEFAULT_DIRECTION = "其他"
@@ -44,10 +47,15 @@ def parse_card_meta(card_text: str, fallback_title: str) -> CardMeta:
                 direction = name
                 break
         else:
+            low = raw.lower()
             if "具身" in raw:
                 direction = "具身智能"
             elif "世界" in raw:
                 direction = "世界模型"
+            elif "全模态" in raw or "omni" in low:
+                direction = "Omni"
+            elif "infra" in low or "基础设施" in raw:
+                direction = "Infra"
     return CardMeta(zh_title=zh.group(1).strip() if zh else fallback_title, direction=direction)
 
 
@@ -123,7 +131,7 @@ def summary_markdown(date_str: str, papers: list[Paper], failed_count: int) -> s
     for p in papers:
         direction = parse_card_meta(p.card_text or "", p.title).direction
         dist[direction] = dist.get(direction, 0) + 1
-    order = ["LLM", "具身智能", "世界模型", "RL", "其他"]
+    order = ["LLM", "具身智能", "世界模型", "RL", "Omni", "Infra", "其他"]
     short = {"具身智能": "具身"}
     dist_str = " · ".join(f"{short.get(d, d)}×{dist[d]}" for d in order if d in dist)
 
