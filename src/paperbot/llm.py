@@ -60,6 +60,25 @@ DETAIL_PROMPT = """你是一位资深 AI 研究员。请基于以下论文{sourc
 {{≤40字}}"""
 
 
+# 二级语义过滤 prompt：关键词命中后判定是否「核心方向的技术研究」（剔除行业应用水论文）
+RELEVANCE_PROMPT = """你是 AI 研究论文的方向过滤器。判断论文是否属于下列核心方向的技术研究：
+
+- LLM：架构、预训练（pre-training）、后训练（post-training，如 SFT/RLHF/RLVR）、推理增强、对齐、评测
+- 具身智能：机器人学习、VLA、操作策略
+- 世界模型
+- RL：强化学习算法与方法
+- Omni：全模态/多模态模型的架构与训练
+- Infra：训练/推理系统、KV cache、分布式训练、量化、MoE、serving
+
+不属于（回答 NO）：把上述技术当工具解决具体行业问题的应用型论文（如医疗、法律、教育、金融、遥感、生物、材料、农业、社会科学等场景落地）。
+属于（回答 YES）：核心方向的综述、benchmark、数据集、方法论。
+
+只回答 YES 或 NO，不要输出任何其他内容。
+
+标题：{title}
+摘要：{abstract}"""
+
+
 @dataclass
 class LLMResult:
     text: str
@@ -120,6 +139,16 @@ def _chat(prompt: str, max_tokens: int) -> LLMResult:
 
 def generate_card(title: str, abstract: str) -> LLMResult:
     return _chat(CARD_PROMPT.format(title=title, abstract=abstract), CARD_MAX_TOKENS)
+
+
+def judge_relevance(title: str, abstract: str) -> tuple[bool, int]:
+    """二级语义过滤：是否核心方向技术研究。返回 (是否相关, tokens)。
+
+    模型回答无法识别时按 YES 处理（fail-open，宁多勿漏，交给卡片环节）。
+    """
+    result = _chat(RELEVANCE_PROMPT.format(title=title, abstract=abstract), max_tokens=10)
+    verdict = result.text.strip().upper()
+    return ("NO" not in verdict, result.tokens)
 
 
 def generate_detail(title: str, content: str, *, is_fulltext: bool) -> LLMResult:

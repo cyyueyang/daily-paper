@@ -79,7 +79,8 @@ launchctl print gui/$(id -u)/com.paperbot.daily | head   # 查看状态
 ## 运行机制
 
 - **存储**：SQLite（`data/papers.db`），论文状态机 `pending → delivered → read`，`skipped` 可随时深读回 `read`；状态全在 DB，进程重启无损恢复，当日汇总不会重复推送
-- **抓取**：arXiv 官方 Atom API，请求间隔 ≥3s，429/超时重试 2 次；以 `arxiv_id`（不含版本号）去重
+- **抓取**：arXiv 官方 Atom API，请求间隔 ≥3s，429/超时重试 2 次；以 `arxiv_id`（不含版本号）去重；官方 API 不可用时自动降级到主站列表页通道
+- **过滤**：关键词召回 → DeepSeek 二级语义判定（剔除「把 LLM 当工具的行业应用型」论文，只留 LLM 架构/预训练/后训练/具身/世界模型/RL/Omni/Infra 的技术研究）
 - **总结**：DeepSeek `deepseek-chat`，速读卡片 `max_tokens=600`，深度解读 `max_tokens=2000`；单篇失败标 `summarize_failed` 不阻塞队列
 - **深度解读**：PDF 存 `data/pdfs/` 复用，`pypdf` 提取；全文 >100k 字符截断保留前 60k + 后 20k；结果入库缓存，重复请求不耗 token
 - **日志**：`logs/paperbot.log`（1MB×3 轮转）+ 终端输出

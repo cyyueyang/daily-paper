@@ -174,6 +174,31 @@ def pending_count() -> int:
 
 # ---------- 速读卡片生成记录 ----------
 
+def papers_awaiting_relevance() -> list[Paper]:
+    """关键词命中但还没过二级语义判定的论文。"""
+    with SessionLocal() as s:
+        papers = list(
+            s.scalars(
+                select(Paper)
+                .where(Paper.filtered_out == 0, Paper.relevance_checked == 0)
+                .order_by(Paper.published, Paper.id)
+            ).all()
+        )
+        s.expunge_all()
+        return papers
+
+
+def record_relevance(paper_id: int, relevant: bool, tokens: int) -> None:
+    with SessionLocal.begin() as s:
+        paper = s.get(Paper, paper_id)
+        if paper is None:
+            return
+        paper.relevance_checked = 1
+        if not relevant:
+            paper.filtered_out = 1  # 语义淘汰：保留数据但不进队列
+        add_tokens(s, paper, tokens)
+
+
 def papers_awaiting_summary(limit: int | None = None) -> list[Paper]:
     """命中关键词但还没卡片的 pending 论文（补生成入口；API key 后补也能恢复）。"""
     with SessionLocal() as s:

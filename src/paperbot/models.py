@@ -45,7 +45,8 @@ class Paper(Base):
     pdf_url: Mapped[str | None] = mapped_column(String, nullable=True)
     abs_url: Mapped[str | None] = mapped_column(String, nullable=True)
     matched_keyword: Mapped[str | None] = mapped_column(String, nullable=True)  # 命中的第一个关键词
-    filtered_out: Mapped[int] = mapped_column(Integer, default=0)  # 1=未命中关键词
+    filtered_out: Mapped[int] = mapped_column(Integer, default=0)  # 1=未命中关键词或语义过滤淘汰
+    relevance_checked: Mapped[int] = mapped_column(Integer, default=0)  # 1=已过二级语义判定
     status: Mapped[str] = mapped_column(String, default=STATUS_PENDING, index=True)
     card_text: Mapped[str | None] = mapped_column(Text, nullable=True)  # 速读卡片缓存
     detail_text: Mapped[str | None] = mapped_column(Text, nullable=True)  # 深度解读缓存

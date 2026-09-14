@@ -17,7 +17,13 @@ from .cardfmt import summary_markdown
 from .config import Settings, get_settings
 from .db import SessionLocal
 from .models import STATUS_SUMMARIZE_FAILED, Paper
-from .queue_service import mark_summarize_failed, papers_awaiting_summary, record_card
+from .queue_service import (
+    mark_summarize_failed,
+    papers_awaiting_relevance,
+    papers_awaiting_summary,
+    record_card,
+    record_relevance,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +37,35 @@ class DailyReport:
     today_papers: list[Paper] = field(default_factory=list)  # 今日入队且已出卡片
     summary_text: str = ""
     pushed: bool = False
+
+
+def refine_relevance() -> tuple[int, int]:
+    """二级语义过滤：关键词命中的论文再过一道 DeepSeek 相关性判定（FR-1 增强）。
+
+    剔除「把 LLM 当工具解决行业问题」的应用型论文，只留核心方向技术研究。
+    返回 (保留数, 淘汰数)。判定失败 fail-open：不过滤、不标记，明天重试。
+    """
+    settings = get_settings()
+    if not settings.deepseek_api_key:
+        return 0, 0
+    papers = papers_awaiting_relevance()
+    kept = dropped = 0
+    for i, paper in enumerate(papers):
+        try:
+            relevant, tokens = llm.judge_relevance(paper.title, paper.abstract)
+            record_relevance(paper.id, relevant, tokens)
+            if relevant:
+                kept += 1
+            else:
+                dropped += 1
+                logger.info("语义淘汰 %s：%s", paper.arxiv_id, paper.title[:60])
+        except llm.LLMError as exc:
+            logger.warning("相关性判定失败 %s：%s（fail-open 保留，明天重试）", paper.arxiv_id, exc)
+        if i + 1 < len(papers):
+            time.sleep(llm.CALL_INTERVAL_S)
+    if papers:
+        logger.info("语义过滤完成：判定 %d，保留 %d，淘汰 %d", len(papers), kept, dropped)
+    return kept, dropped
 
 
 def summarize_pending() -> tuple[int, int]:
@@ -99,6 +134,7 @@ def run_daily(settings: Settings) -> DailyReport:
     """每日任务主体：抓取 → 总结 → 组装汇总文本（不推送，推送由调用方决定）。"""
     report = DailyReport(date=dt.date.today().isoformat())
     report.fetched = arxiv_client.run_fetch(settings)
+    refine_relevance()  # 关键词召回 → 语义判定，通过的才生成卡片
     report.summarized_ok, report.summarized_failed = summarize_pending()
     report.today_papers = today_hit_papers()
     report.summary_text = summary_markdown(
